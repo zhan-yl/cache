@@ -2,12 +2,18 @@ package cache
 
 import (
 	"container/list"
+	"errors"
 	"sync"
 	"sync/atomic"
 )
 
+const ErrMaxsize = "Must provide a nonnegative size"
+
 // An AtomicInt is an int64 to be accessed atomically.
 type AtomicInt int64
+
+// EvictCallback is used to get a callback when a cache entry is evicted
+type EvictCallback func(key interface{}, value interface{})
 
 // MemCache is an LRU cache. It is safe for concurrent access.
 type MemCache struct {
@@ -16,6 +22,7 @@ type MemCache struct {
 	cacheList   *list.List
 	cache       map[interface{}]*list.Element
 	hits, gets  AtomicInt
+	onEvict     EvictCallback
 }
 
 // Map中具体的存储结构
@@ -43,15 +50,21 @@ type Cache interface {
 /*
 创建一个MemCache结构，传入参数maxItemSize表明该结构的最大大小.为0表示不限大小，非0的情况下cache大小超过maxItemSize将触发swap
 
+onEvict为提供的callback函数，在发生swap时被触发
+
 	NewMemCache If maxItemSize is zero, the cache has no limit.
 	if maxItemSize is not zero, when cache's size beyond maxItemSize,start to swap
 */
-func NewMemCache(maxItemSize int) *MemCache {
+func NewMemCache(maxItemSize int, onEvict EvictCallback) (*MemCache, error) {
+	if maxItemSize < 0 {
+		return nil, errors.New(ErrMaxsize)
+	}
 	return &MemCache{
 		maxItemSize: maxItemSize,
 		cacheList:   list.New(),
 		cache:       make(map[interface{}]*list.Element),
-	}
+		onEvict:     onEvict,
+	}, nil
 }
 
 //返回cache的当前状态
@@ -82,7 +95,7 @@ func (c *MemCache) Get(key string) (interface{}, bool) {
 	return nil, false
 }
 
-//为key设置一个值
+//为key设置一个值，在队列长度大于maxItemSize的情况下触发swap并计数
 //	Put a value with key
 func (c *MemCache) Put(key string, value interface{}) {
 	c.mutex.Lock()
@@ -122,8 +135,11 @@ func (c *MemCache) RemoveOldest() {
 	ele := c.cacheList.Back()
 	if ele != nil {
 		c.cacheList.Remove(ele)
-		key := ele.Value.(*entry).key
-		delete(c.cache, key)
+		kv := ele.Value.(*entry)
+		delete(c.cache, kv.key)
+		if c.onEvict != nil {
+			c.onEvict(kv.key, kv.value)
+		}
 	}
 }
 

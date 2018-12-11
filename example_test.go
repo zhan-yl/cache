@@ -5,26 +5,37 @@ import (
 )
 
 func ExampleMemCache_Put() {
-	var cache Cache
-	cache = NewMemCache(0)
+	evictCounter := 0
+	onEvicted := func(k interface{}, v interface{}) {
+		evictCounter++
+	}
+	cache, _ := NewMemCache(1, onEvicted)
+	cache.Put("key1", 2)
 	cache.Put("key", 1)
 	if val, ok := cache.Get("key"); ok {
 		fmt.Println(val)
 	}
+	fmt.Println(evictCounter)
 	// Output:
+	// 1
 	// 1
 }
 
 func ExampleMemCache_Status() {
-	var cache Cache
-	cache = NewMemCache(0)
+	evictCounter := 0
+	onEvicted := func(k interface{}, v interface{}) {
+		evictCounter++
+	}
+	cache, _ := NewMemCache(0, onEvicted)
 	cache.Put("key", 1)
 	if val, ok := cache.Get("key"); ok {
 		fmt.Println(val)
 	}
 	status := cache.Status()
 	fmt.Println(status)
+	fmt.Println(evictCounter)
 	// Output:
 	// 1
 	// &{1 1 0 1}
+	// 0
 }

@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-type simpleStruct struct {
-	int
-	string
-}
-
-type complexStruct struct {
-	int
-	simpleStruct
-}
-
 var getTests = []struct {
 	name       string
 	keyToAdd   string
@@ -32,9 +22,22 @@ const testInt = 1234
 var m sync.Mutex
 
 func TestPut(t *testing.T) {
-	t.Run("LRU Put测试", func(t *testing.T) {
-		var cache Cache
-		cache = NewMemCache(0)
+	t.Run("LRU Put测试：maxSize错误", func(t *testing.T) {
+		_, err := NewMemCache(-10, nil)
+		if err.Error() != ErrMaxsize {
+			t.Fatalf("err: %v", err)
+		}
+	})
+
+	t.Run("LRU Put测试：插值错误", func(t *testing.T) {
+		evictCounter := 0
+		onEvicted := func(k interface{}, v interface{}) {
+			evictCounter++
+		}
+		cache, err := NewMemCache(0, onEvicted)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 		values := []string{"test1", "test2", "test3"}
 		key := "key1"
 		for _, v := range values {
@@ -46,13 +49,18 @@ func TestPut(t *testing.T) {
 				t.Fatalf("expect key:%v, value:%v, get value:%v", key, v, val)
 			}
 		}
+		if evictCounter != 0 {
+			t.Fatalf("evictCounter is incorrect :%d", evictCounter)
+		}
 	})
 }
 
 func TestGet(t *testing.T) {
 	t.Run("LRU Get测试", func(t *testing.T) {
-		var cache Cache
-		cache = NewMemCache(0)
+		cache, err := NewMemCache(0, nil)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 		for _, tt := range getTests {
 			cache.Put(tt.keyToAdd, testInt)
 			val, ok := cache.Get(tt.keyToGet)
@@ -68,8 +76,10 @@ func TestGet(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	t.Run("LRU Delete测试", func(t *testing.T) {
-		var cache Cache
-		cache = NewMemCache(0)
+		cache, err := NewMemCache(0, nil)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 		cache.Put(testKey, testInt)
 		if val, ok := cache.Get(testKey); !ok {
 			t.Fatal("TestRemove returned no match")
@@ -86,18 +96,26 @@ func TestDelete(t *testing.T) {
 
 func TestStatus(t *testing.T) {
 	t.Run("LRU Status测试", func(t *testing.T) {
-		keys := []string{"1", "2", "3", "4", "5"}
+		keys := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
 
 		var gets int64
 		var hits int64
 		var maxSize int
 		var currentSize int
-		maxSize = 20
-		cache := NewMemCache(maxSize)
+		maxSize = 5
+		evictCounter := 0
+		onEvicted := func(k interface{}, v interface{}) {
+			evictCounter++
+		}
+		cache, err := NewMemCache(maxSize, onEvicted)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 		for _, key := range keys {
 			cache.Put(key, testInt)
 			currentSize++
 		}
+		currentSize -= evictCounter
 
 		newKeys := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
 
@@ -108,7 +126,7 @@ func TestStatus(t *testing.T) {
 			}
 			gets++
 		}
-		t.Logf("gets:%v, hits:%v, hitratio:%.2f%%, maxSize:%v, currentSize:%v", gets, hits, float64(hits)*100.0/float64(gets), maxSize, currentSize)
+		t.Logf("evict:%v, gets:%v, hits:%v, hitratio:%.2f%%, maxSize:%v, currentSize:%v", evictCounter, gets, hits, float64(hits)*100.0/float64(gets), maxSize, currentSize)
 		status := cache.Status()
 		if status.CurrentSize != currentSize || status.MaxItemSize != maxSize ||
 			status.Gets != gets || status.Hits != hits {
@@ -126,7 +144,14 @@ func TestLRU(t *testing.T) {
 		keysorder2 := []string{"1", "2", "4"}
 		keysorder3 := []string{"6", "5", "3"}
 		maxSize := 3
-		cache := NewMemCache(maxSize)
+		evictCounter := 0
+		onEvicted := func(k interface{}, v interface{}) {
+			evictCounter++
+		}
+		cache, err := NewMemCache(maxSize, onEvicted)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 		for i, key := range keys {
 			cache.Put(key, testInt)
 			if i == 3 {
@@ -184,6 +209,11 @@ func TestLRU(t *testing.T) {
 				t.Fatalf("expected key %v, got:%v", keysorder3[j], e.Value.(*entry).key)
 			}
 		}
+
+		//swap 5 times
+		if evictCounter != 5 {
+			t.Fatalf("evictCounter is incorrect :%d", evictCounter)
+		}
 	})
 }
 
@@ -203,7 +233,10 @@ func safethread(c *MemCache, w chan bool) {
 //测试线程安全性，对value进行并发设值，同时统计hit,get
 func TestSafeThread(t *testing.T) {
 	t.Run("线程安全性测试", func(t *testing.T) {
-		cache := NewMemCache(0)
+		cache, err := NewMemCache(0, nil)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
 		cache.Put(testKey, 0)
 		w1, w2, w3 := make(chan bool), make(chan bool), make(chan bool)
 		go safethread(cache, w1)
@@ -223,8 +256,10 @@ func TestSafeThread(t *testing.T) {
 }
 
 func BenchmarkPutGet(b *testing.B) {
-	var cache Cache
-	cache = NewMemCache(0)
+	cache, err := NewMemCache(0, nil)
+	if err != nil {
+		b.Fatalf("err: %v", err)
+	}
 	for i := 0; i < b.N; i++ {
 		cache.Put(strconv.Itoa(i), i)
 	}
