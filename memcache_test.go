@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -21,12 +22,18 @@ const testInt = 1234
 
 var m sync.Mutex
 
+func assertEqual(t *testing.T, got, want interface{}) {
+	//错误定位
+	t.Helper()
+	if got != want {
+		t.Fatalf("got '%v' want '%v'", got, want)
+	}
+}
+
 func TestPut(t *testing.T) {
 	t.Run("LRU Put测试：maxSize错误", func(t *testing.T) {
 		_, err := NewMemCache(-10, nil)
-		if err.Error() != ErrMaxsize {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err.Error(), ErrMaxsize)
 	})
 
 	t.Run("LRU Put测试：插值错误", func(t *testing.T) {
@@ -35,40 +42,31 @@ func TestPut(t *testing.T) {
 			evictCounter++
 		}
 		cache, err := NewMemCache(0, onEvicted)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err, nil)
+
 		values := []string{"test1", "test2", "test3"}
 		key := "key1"
 		for _, v := range values {
 			cache.Put(key, v)
 			val, ok := cache.Get(key)
-			if !ok {
-				t.Fatalf("expect key:%v, value:%v", key, v)
-			} else if ok && val != v {
-				t.Fatalf("expect key:%v, value:%v, get value:%v", key, v, val)
-			}
+			assertEqual(t, ok, true)
+			assertEqual(t, val, v)
 		}
-		if evictCounter != 0 {
-			t.Fatalf("evictCounter is incorrect :%d", evictCounter)
-		}
+		assertEqual(t, evictCounter, 0)
 	})
 }
 
 func TestGet(t *testing.T) {
 	t.Run("LRU Get测试", func(t *testing.T) {
 		cache, err := NewMemCache(0, nil)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err, nil)
+
 		for _, tt := range getTests {
 			cache.Put(tt.keyToAdd, testInt)
 			val, ok := cache.Get(tt.keyToGet)
-
-			if ok != tt.expectedOk {
-				t.Fatalf("%s: val:%v cache hit = %v; want %v", tt.name, val, ok, tt.expectedOk)
-			} else if ok && val != testInt {
-				t.Fatalf("%s expected get to return %v but got %v", tt.name, testInt, val)
+			assertEqual(t, ok, tt.expectedOk)
+			if ok {
+				assertEqual(t, val, testInt)
 			}
 		}
 	})
@@ -77,20 +75,16 @@ func TestGet(t *testing.T) {
 func TestDelete(t *testing.T) {
 	t.Run("LRU Delete测试", func(t *testing.T) {
 		cache, err := NewMemCache(0, nil)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err, nil)
+
 		cache.Put(testKey, testInt)
-		if val, ok := cache.Get(testKey); !ok {
-			t.Fatal("TestRemove returned no match")
-		} else if val != testInt {
-			t.Fatalf("TestRemove failed. Expected %d, got %v", testInt, val)
-		}
+		val, ok := cache.Get(testKey)
+		assertEqual(t, ok, true)
+		assertEqual(t, val, testInt)
 
 		cache.Delete(testKey)
-		if _, ok := cache.Get(testKey); ok {
-			t.Fatal("TestRemove returned a removed item")
-		}
+		_, ok = cache.Get(testKey)
+		assertEqual(t, ok, false)
 	})
 }
 
@@ -108,9 +102,8 @@ func TestStatus(t *testing.T) {
 			evictCounter++
 		}
 		cache, err := NewMemCache(maxSize, onEvicted)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err, nil)
+
 		for _, key := range keys {
 			cache.Put(key, testInt)
 			currentSize++
@@ -128,11 +121,10 @@ func TestStatus(t *testing.T) {
 		}
 		t.Logf("evict:%v, gets:%v, hits:%v, hitratio:%.2f%%, maxSize:%v, currentSize:%v", evictCounter, gets, hits, float64(hits)*100.0/float64(gets), maxSize, currentSize)
 		status := cache.Status()
-		if status.CurrentSize != currentSize || status.MaxItemSize != maxSize ||
-			status.Gets != gets || status.Hits != hits {
-			t.Fatalf("get status maxSize:%v, currentSize:%v, nget:%v, nhit:%v",
-				status.MaxItemSize, status.CurrentSize, status.Gets, status.Hits)
-		}
+		assertEqual(t, status.CurrentSize, currentSize)
+		assertEqual(t, status.MaxItemSize, maxSize)
+		assertEqual(t, status.Gets, gets)
+		assertEqual(t, status.Hits, hits)
 	})
 }
 
@@ -146,31 +138,27 @@ func TestLRU(t *testing.T) {
 		maxSize := 3
 		evictCounter := 0
 		onEvicted := func(k interface{}, v interface{}) {
+			fmt.Printf("The item will be swapped out, key=%v, value=%v\n", k, v)
 			evictCounter++
 		}
 		cache, err := NewMemCache(maxSize, onEvicted)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err, nil)
+
 		for i, key := range keys {
 			cache.Put(key, testInt)
 			if i == 3 {
 				status := cache.Status()
-				if status.CurrentSize != maxSize {
-					t.Fatalf("expected maxSize %v,currentSize:%v", maxSize, status.CurrentSize)
-				}
+				assertEqual(t, status.CurrentSize, maxSize)
+
 				//check key&value
 				_, ok1 := cache.cache["2"]
 				_, ok2 := cache.cache["3"]
-				if !(ok1 && ok2) {
-					t.Fatalf("expected remains key 2:%v,3:%v", ok1, ok2)
-				}
+				assertEqual(t, ok1, true)
+				assertEqual(t, ok2, true)
 
 				//check LRU order
 				for e, j := cache.cacheList.Front(), 0; e != nil; e, j = e.Next(), j+1 {
-					if e.Value.(*entry).key != keysorder1[j] {
-						t.Fatalf("expected key %v, got:%v", keysorder1[j], e.Value.(*entry).key)
-					}
+					assertEqual(t, e.Value.(*entry).key, keysorder1[j])
 				}
 			}
 			if i == 5 {
@@ -179,41 +167,35 @@ func TestLRU(t *testing.T) {
 				_, ok2 := cache.cache["2"]
 				_, ok3 := cache.cache["4"]
 
-				if !(ok1 && ok2 && ok3) {
-					t.Fatalf("expected remains key 1:%v 2:%v,4:%v", ok1, ok2, ok3)
-				}
+				assertEqual(t, ok1, true)
+				assertEqual(t, ok2, true)
+				assertEqual(t, ok3, true)
 
 				//check LRU order
 				for e, j := cache.cacheList.Front(), 0; e != nil; e, j = e.Next(), j+1 {
-					if e.Value.(*entry).key != keysorder2[j] {
-						t.Fatalf("expected key %v, got:%v", keysorder2[j], e.Value.(*entry).key)
-					}
+					assertEqual(t, e.Value.(*entry).key, keysorder2[j])
 				}
 			}
 		}
 
 		status := cache.Status()
-		if status.CurrentSize != maxSize {
-			t.Fatalf("expected maxSize %v,currentSize:%v", maxSize, status.CurrentSize)
-		}
+		assertEqual(t, status.CurrentSize, maxSize)
+
 		//check key&value
 		_, ok1 := cache.cache["3"]
 		_, ok2 := cache.cache["5"]
 		_, ok3 := cache.cache["6"]
-		if !(ok1 && ok2 && ok3) {
-			t.Fatalf("expected remains key 3:%v,5:%v, 6:%v", ok1, ok2, ok3)
-		}
+		assertEqual(t, ok1, true)
+		assertEqual(t, ok2, true)
+		assertEqual(t, ok3, true)
+
 		//check LRU order
 		for e, j := cache.cacheList.Front(), 0; e != nil; e, j = e.Next(), j+1 {
-			if e.Value.(*entry).key != keysorder3[j] {
-				t.Fatalf("expected key %v, got:%v", keysorder3[j], e.Value.(*entry).key)
-			}
+			assertEqual(t, e.Value.(*entry).key, keysorder3[j])
 		}
 
 		//swap 5 times
-		if evictCounter != 5 {
-			t.Fatalf("evictCounter is incorrect :%d", evictCounter)
-		}
+		assertEqual(t, evictCounter, 5)
 	})
 }
 
@@ -234,9 +216,8 @@ func safethread(c *MemCache, w chan bool) {
 func TestSafeThread(t *testing.T) {
 	t.Run("线程安全性测试", func(t *testing.T) {
 		cache, err := NewMemCache(0, nil)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
+		assertEqual(t, err, nil)
+
 		cache.Put(testKey, 0)
 		w1, w2, w3 := make(chan bool), make(chan bool), make(chan bool)
 		go safethread(cache, w1)
@@ -247,10 +228,9 @@ func TestSafeThread(t *testing.T) {
 		<-w3
 		if val, ok := cache.Get(testKey); ok {
 			status := cache.Status()
-			if !(val == 3000000 && status.Gets == 3000001 && status.Hits == 3000001) {
-				t.Fatalf("get status val:%v, maxSize:%v, currentSize:%v, nget:%v, nhit:%v",
-					val, status.MaxItemSize, status.CurrentSize, status.Gets, status.Hits)
-			}
+			assertEqual(t, val, 3000000)
+			assertEqual(t, status.Gets, int64(3000001))
+			assertEqual(t, status.Hits, int64(3000001))
 		}
 	})
 }
